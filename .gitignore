@@ -1,0 +1,13 @@
+node_modules/
+out/
+release/
+dist/
+*.log
+*.tsbuildinfo
+.ui-test/
+.cache-test/
+.pnpm-store/
+.icon-preview.html
+.DS_Store
+Thumbs.db
+.vendor/
