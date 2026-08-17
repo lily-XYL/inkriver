@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 import { useApp } from '../lib/store'
 import { Field, Switch, useT } from './ui'
 import { Icon } from './Icons'
+import type { ShortcutId, Shortcuts } from '../../../shared/types'
 
 const FONTS = [
   { value: '楷体, KaiTi, serif', label: '楷体' },
@@ -18,6 +19,21 @@ interface BackupItem {
   mtime: number
 }
 
+const SHORTCUT_ACTIONS: { id: ShortcutId; label: string }[] = [
+  { id: 'new-project', label: '新建项目' },
+  { id: 'new-chapter', label: '新建章节' },
+  { id: 'open-project', label: '打开项目' },
+  { id: 'save', label: '保存' },
+  { id: 'export', label: '导出' },
+  { id: 'find', label: '查找 / 替换' },
+  { id: 'focus-mode', label: '专注模式' },
+  { id: 'toggle-theme', label: '切换主题' }
+]
+
+function displayAccel(accel: string): string {
+  return accel.replace('CmdOrCtrl', 'Ctrl')
+}
+
 export function SettingsView(): JSX.Element {
   const t = useT()
   const book = useApp((s) => s.book)
@@ -30,6 +46,8 @@ export function SettingsView(): JSX.Element {
   const emptyTrash = useApp((s) => s.emptyTrash)
   const restoreBackup = useApp((s) => s.restoreBackup)
   const [backups, setBackups] = useState<BackupItem[]>([])
+  const [shortcuts, setShortcuts] = useState<Shortcuts | null>(null)
+  const [capturing, setCapturing] = useState<ShortcutId | null>(null)
 
   const refresh = async (): Promise<void> => {
     if (!projectDir) return
@@ -40,6 +58,16 @@ export function SettingsView(): JSX.Element {
   useEffect(() => {
     void refresh()
   }, [projectDir]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    void window.inkriver.shortcuts.get().then(setShortcuts)
+    return window.inkriver.shortcuts.onCaptured(({ id, accel, error, shortcuts: next }) => {
+      setCapturing(null)
+      setShortcuts(next)
+      if (error) toast(error, 'error')
+      else if (id && accel) toast(`快捷键 ${displayAccel(accel)} 已生效`, 'success')
+    })
+  }, [toast])
 
   if (!book) {
     return (
@@ -230,6 +258,93 @@ export function SettingsView(): JSX.Element {
             <div className="set-label">{t('showWordCount')}</div>
           </div>
           <Switch checked={s.showWordCount} onChange={(v) => updateSettings({ showWordCount: v })} />
+        </div>
+      </div>
+
+      <div className="card settings-section">
+        <h2>快捷键</h2>
+        <p className="muted" style={{ fontSize: 12, marginTop: -4, marginBottom: 10 }}>
+          点击右侧按钮后按下新的组合键即可修改（需含 Ctrl / Alt / Shift，按 Esc 取消）
+        </p>
+        {SHORTCUT_ACTIONS.map(({ id, label }) => (
+          <div className="setting-row" key={id}>
+            <div>
+              <div className="set-label">{label}</div>
+            </div>
+            <button
+              className={`shortcut-key ${capturing === id ? 'recording' : ''}`}
+              onClick={() => {
+                const next = capturing === id ? null : id
+                setCapturing(next)
+                void window.inkriver.shortcuts.capture(next)
+              }}
+              onBlur={() => {
+                if (capturing === id) {
+                  setCapturing(null)
+                  void window.inkriver.shortcuts.capture(null)
+                }
+              }}
+            >
+              {capturing === id
+                ? '按下组合键…（Esc 取消）'
+                : displayAccel(shortcuts?.[id] ?? '')}
+            </button>
+          </div>
+        ))}
+        <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+          <button
+            className="btn small"
+            onClick={() => {
+              void window.inkriver.shortcuts.reset().then((res) => {
+                setShortcuts(res.shortcuts)
+                toast('已恢复默认快捷键', 'success')
+              })
+            }}
+          >
+            <Icon name="restore" size={13} /> 恢复默认
+          </button>
+        </div>
+      </div>
+
+      <div className="card settings-section">
+        <h2>使用文档</h2>
+        <div className="doc-block">
+          <div className="doc-title">全局快捷键（可在上方自定义）</div>
+          <div className="doc-grid">
+            <span>Ctrl+N 新建项目</span>
+            <span>Ctrl+Shift+N 新建章节</span>
+            <span>Ctrl+O 打开项目</span>
+            <span>Ctrl+S 保存</span>
+            <span>Ctrl+E 导出</span>
+            <span>Ctrl+F 查找 / 替换</span>
+            <span>Ctrl+Shift+F 专注模式</span>
+            <span>Ctrl+Shift+T 切换主题</span>
+            <span>F11 全屏</span>
+          </div>
+        </div>
+        <div className="doc-block">
+          <div className="doc-title">编辑器快捷键</div>
+          <div className="doc-grid">
+            <span>Ctrl+B 加粗</span>
+            <span>Ctrl+I 斜体</span>
+            <span>Ctrl+U 下划线</span>
+            <span>Ctrl+Shift+S 删除线</span>
+            <span>Ctrl+Shift+H 高亮</span>
+            <span>Ctrl+Z 撤销 / Ctrl+Y 重做</span>
+            <span>Ctrl+Alt+1/2/3 标题</span>
+            <span>Ctrl+Shift+8/7/9 列表</span>
+            <span>Ctrl+E 行内代码</span>
+          </div>
+        </div>
+        <div className="doc-block">
+          <div className="doc-title">写作提示</div>
+          <ul className="doc-list">
+            <li>自动备份默认开启，可在“备份”中调整间隔；每次打开 / 关闭项目都会强制留一份快照。</li>
+            <li>新建章节会自动编号为“第 N 章”，可直接修改标题。</li>
+            <li>删除的章节、笔记可在“数据”的回收站中恢复。</li>
+            <li>正文中插入的图片，导出 docx / epub 时会自动嵌入。</li>
+            <li>全文搜索（左侧搜索页）点击章节结果后，会自动定位并高亮到第一个匹配处。</li>
+          </ul>
         </div>
       </div>
 

@@ -12,6 +12,7 @@ import { SearchView } from './components/SearchView'
 import { SettingsView } from './components/SettingsView'
 import { ExportDialog, NewProjectModal, ConfirmModal, Toasts } from './components/Modals'
 import { Logo } from './components/Icons'
+import { TitleBar } from './components/TitleBar'
 
 export default function App(): JSX.Element {
   const ready = useApp((s) => s.ready)
@@ -50,18 +51,21 @@ export default function App(): JSX.Element {
 
   return (
     <div className={`app ${focusMode ? 'focus-mode' : ''}`}>
-      <Sidebar />
-      <main className="main">
-        {view === 'home' && <HomeView />}
-        {view === 'editor' && <EditorView />}
-        {view === 'notes' && <NotesView />}
-        {view === 'characters' && <CharactersView />}
-        {view === 'world' && <WorldView />}
-        {view === 'timeline' && <TimelineView />}
-        {view === 'stats' && <StatsView />}
-        {view === 'search' && <SearchView />}
-        {view === 'settings' && <SettingsView />}
-      </main>
+      <TitleBar />
+      <div className="app-body">
+        <Sidebar />
+        <main className="main">
+          {view === 'home' && <HomeView />}
+          {view === 'editor' && <EditorView />}
+          {view === 'notes' && <NotesView />}
+          {view === 'characters' && <CharactersView />}
+          {view === 'world' && <WorldView />}
+          {view === 'timeline' && <TimelineView />}
+          {view === 'stats' && <StatsView />}
+          {view === 'search' && <SearchView />}
+          {view === 'settings' && <SettingsView />}
+        </main>
+      </div>
       <ExportDialog />
       <NewProjectModal />
       <ConfirmModal />

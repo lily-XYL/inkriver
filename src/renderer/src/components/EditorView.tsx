@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties, type JSX } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type JSX } from 'react'
 import type { Editor } from '@tiptap/react'
 import { useApp } from '../lib/store'
 import { RichEditor } from './RichEditor'
@@ -19,13 +19,15 @@ export function EditorView(): JSX.Element {
   const dirty = useApp((s) => s.dirty)
   const updateChapter = useApp((s) => s.updateChapter)
   const deleteChapter = useApp((s) => s.deleteChapter)
-  const duplicateChapter = useApp((s) => s.duplicateChapter)
   const togglePreview = useApp((s) => s.togglePreview)
   const toggleFocus = useApp((s) => s.toggleFocus)
   const toggleExport = useApp((s) => s.toggleExport)
   const copyBookText = useApp((s) => s.copyBookText)
+  const copyChapterText = useApp((s) => s.copyChapterText)
   const findOpen = useApp((s) => s.findOpen)
   const toggleFind = useApp((s) => s.toggleFind)
+  const locate = useApp((s) => s.locate)
+  const clearLocate = useApp((s) => s.clearLocate)
 
   const [tab, setTab] = useState<'content' | 'outline'>('content')
   const [findText, setFindText] = useState('')
@@ -34,6 +36,16 @@ export function EditorView(): JSX.Element {
   const editorRef = useRef<Editor | null>(null)
 
   const chapter = book?.chapters.find((c) => c.id === chapterId)
+
+  useEffect(() => {
+    if (!locate || !chapterId) return
+    const editor = editorRef.current
+    if (!editor) return
+    setFindText(locate)
+    setSearchQuery(editor, locate)
+    setFindCount(getSearchCount(editor))
+    clearLocate()
+  }, [chapterId, locate, clearLocate])
 
   if (!book || !chapter) {
     return (
@@ -58,7 +70,6 @@ export function EditorView(): JSX.Element {
     const editor = editorRef.current
     if (!editor) return
     if (!findText.trim()) {
-      void window.inkriver.find.stop()
       setFindCount({ total: 0, current: 0 })
       return
     }
@@ -120,10 +131,10 @@ export function EditorView(): JSX.Element {
         <button className="icon-btn" title="导出" onClick={toggleExport}>
           <Icon name="download" />
         </button>
-        <button className="icon-btn" title="复制全文" onClick={() => void copyBookText()}>
+        <button className="icon-btn" title="复制全书" onClick={() => void copyBookText()}>
           <Icon name="clipboard" />
         </button>
-        <button className="icon-btn" title="复制章节" onClick={() => duplicateChapter(chapter.id)}>
+        <button className="icon-btn" title="复制本章文字" onClick={() => void copyChapterText(chapter.id)}>
           <Icon name="copy" />
         </button>
         <button className="icon-btn" title="删除章节" onClick={() => deleteChapter(chapter.id)}>
@@ -179,6 +190,7 @@ export function EditorView(): JSX.Element {
               const editor = editorRef.current
               if (editor && findText) {
                 replaceCurrent(editor, replaceText)
+                moveSearch(editor, 1)
                 setFindCount(getSearchCount(editor))
               }
             }}
@@ -219,7 +231,7 @@ export function EditorView(): JSX.Element {
           <div className="editor-paper" style={paperStyle}>
             {tab === 'content' ? (
               <RichEditor
-                key={chapter.id}
+                cacheKey={`content:${chapter.id}`}
                 value={chapter.content}
                 typewriter={settings.typewriter}
                 placeholder="从这里开始落笔…"
@@ -232,7 +244,7 @@ export function EditorView(): JSX.Element {
               />
             ) : (
               <RichEditor
-                key={`outline-${chapter.id}`}
+                cacheKey={`outline:${chapter.id}`}
                 value={chapter.outline}
                 placeholder="本章大纲：这一章要发生什么？"
                 onChange={(html) => updateChapter(chapter.id, { outline: html })}

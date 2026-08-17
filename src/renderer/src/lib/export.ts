@@ -3,7 +3,9 @@ import {
   AlignmentType,
   BorderStyle,
   Document,
+  ExternalHyperlink,
   HeadingLevel,
+  ImageRun,
   Packer,
   Paragraph,
   ShadingType,
@@ -26,6 +28,61 @@ export interface ExportOptions {
 interface OrderedChapter {
   chapter: Chapter
   volumeTitle: string | null
+}
+
+type RunChild = TextRun | ExternalHyperlink
+
+interface EpubImage {
+  name: string
+  data: string
+  mime: string
+}
+
+const imageSizeCache = new Map<string, { width: number; height: number }>()
+
+function dataUrlToBytes(dataUrl: string): { bytes: Uint8Array; mime: string } {
+  const comma = dataUrl.indexOf(',')
+  const meta = dataUrl.slice(0, comma)
+  const b64 = dataUrl.slice(comma + 1)
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  const mime = (meta.match(/data:image\/([a-zA-Z0-9]+)/) || [])[1] || 'png'
+  return { bytes, mime: mime === 'jpeg' ? 'jpg' : mime }
+}
+
+function loadImageSize(src: string): Promise<{ width: number; height: number }> {
+  const cached = imageSizeCache.get(src)
+  if (cached) return Promise.resolve(cached)
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const size = { width: img.naturalWidth || 300, height: img.naturalHeight || 200 }
+      imageSizeCache.set(src, size)
+      resolve(size)
+    }
+    img.onerror = () => {
+      const size = { width: 300, height: 200 }
+      imageSizeCache.set(src, size)
+      resolve(size)
+    }
+    img.src = src
+  })
+}
+
+async function imgToDocx(src: string): Promise<ImageRun> {
+  const { bytes, mime } = dataUrlToBytes(src)
+  const { width, height } = await loadImageSize(src)
+  const maxW = 480
+  const scale = Math.min(1, maxW / width)
+  return new ImageRun({
+    type: mime === 'png' ? 'png' : 'jpg',
+    data: bytes,
+    transformation: {
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale))
+    }
+  })
 }
 
 export function orderedChapters(book: Book): OrderedChapter[] {
@@ -100,8 +157,8 @@ function buildMd(book: Book, items: OrderedChapter[], includeOutline: boolean): 
 // ---------- DOCX ----------
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function inlineRuns(el: Element, inherited: Record<string, any> = {}): TextRun[] {
-  const runs: TextRun[] = []
+function inlineRuns(el: Element, inherited: Record<string, any> = {}): RunChild[] {
+  const runs: RunChild[] = []
   for (const child of Array.from(el.childNodes)) {
     if (child.nodeType === Node.TEXT_NODE) {
       const text = (child.textContent ?? '').replace(/\n+/g, ' ')
@@ -109,7 +166,6 @@ function inlineRuns(el: Element, inherited: Record<string, any> = {}): TextRun[]
     } else if (child.nodeType === Node.ELEMENT_NODE) {
       const elem = child as Element
       const tag = elem.tagName.toLowerCase()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const s: Record<string, any> = { ...inherited }
       if (tag === 'strong' || tag === 'b') s.bold = true
       if (tag === 'em' || tag === 'i') s.italics = true
@@ -121,12 +177,24 @@ function inlineRuns(el: Element, inherited: Record<string, any> = {}): TextRun[]
         s.shading = { type: ShadingType.CLEAR, color: 'auto', fill: 'F2F2F2' }
       }
       if (tag === 'a') {
-        s.color = '0563C1'
-        s.underline = {}
+        runs.push(
+          new ExternalHyperlink({
+            children: inlineRuns(elem, { ...s, color: '0563C1', underline: {} }),
+            link: elem.getAttribute('href') ?? ''
+          })
+        )
+        continue
       }
-      if (['strong', 'b', 'em', 'i', 'u', 's', 'del', 'mark', 'code', 'a', 'span', 'font'].includes(tag)) {
+      if (tag === 'br') {
+        runs.push(new TextRun({ text: ' ', ...s }))
+        continue
+      }
+      if (['strong', 'b', 'em', 'i', 'u', 's', 'del', 'mark', 'code', 'span', 'font', 'sub', 'sup', 'p', 'li', 'blockquote'].includes(tag)) {
         runs.push(...inlineRuns(elem, s))
       } else {
+        if (['ul', 'ol', 'table', 'img', 'pre', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tag)) {
+          continue
+        }
         const text = (elem.textContent ?? '').replace(/\n+/g, ' ')
         if (text) runs.push(new TextRun({ text, ...s }))
       }
@@ -157,12 +225,12 @@ function alignOf(el: HTMLElement): (typeof AlignmentType)[keyof typeof Alignment
   }
 }
 
-function tableToDocx(table: HTMLTableElement): Table {
+async function tableToDocx(table: HTMLTableElement): Promise<Table> {
   const rows: TableRow[] = []
   for (const tr of Array.from(table.rows)) {
     const cells: TableCell[] = []
     for (const td of Array.from(tr.cells)) {
-      const paras = elementChildrenToDocx(td as HTMLElement)
+      const paras = await elementChildrenToDocx(td as HTMLElement)
       const isHeader = td.tagName.toLowerCase() === 'th'
       cells.push(
         new TableCell({
@@ -179,7 +247,36 @@ function tableToDocx(table: HTMLTableElement): Table {
   })
 }
 
-function elementChildrenToDocx(root: HTMLElement): (Paragraph | Table)[] {
+function listToDocx(listEl: HTMLElement, level: number): (Paragraph | Table)[] {
+  const out: (Paragraph | Table)[] = []
+  const ordered = listEl.tagName.toLowerCase() === 'ol'
+  let num = 1
+  for (const li of Array.from(listEl.children)) {
+    if (li.tagName.toLowerCase() !== 'li') continue
+    const el = li as HTMLElement
+    const checked = el.getAttribute('data-checked')
+    const children: RunChild[] = []
+    if (checked !== null) children.push(new TextRun({ text: checked === 'true' ? '☑ ' : '☐ ' }))
+    children.push(...inlineRuns(el))
+    if (ordered) {
+      out.push(
+        new Paragraph({
+          children: [new TextRun({ text: `${num++}. ` }), ...children],
+          indent: { left: 360 * (level + 1) }
+        })
+      )
+    } else {
+      out.push(new Paragraph({ children, bullet: { level } }))
+    }
+    const nested = Array.from(el.children).find(
+      (c) => c.tagName.toLowerCase() === 'ul' || c.tagName.toLowerCase() === 'ol'
+    ) as HTMLElement | undefined
+    if (nested) out.push(...listToDocx(nested, level + 1))
+  }
+  return out
+}
+
+async function elementChildrenToDocx(root: HTMLElement): Promise<(Paragraph | Table)[]> {
   const out: (Paragraph | Table)[] = []
   for (const child of Array.from(root.childNodes)) {
     if (child.nodeType === Node.TEXT_NODE) {
@@ -194,6 +291,11 @@ function elementChildrenToDocx(root: HTMLElement): (Paragraph | Table)[] {
       out.push(new Paragraph({ children: inlineRuns(el), heading: HEADING_MAP[tag] }))
     } else if (tag === 'p') {
       out.push(new Paragraph({ children: inlineRuns(el), alignment: alignOf(el), spacing: { after: 120 } }))
+    } else if (tag === 'img') {
+      const src = el.getAttribute('src') ?? ''
+      if (src.startsWith('data:image/')) {
+        out.push(new Paragraph({ children: [await imgToDocx(src)], alignment: AlignmentType.CENTER, spacing: { after: 120 } }))
+      }
     } else if (tag === 'blockquote') {
       out.push(
         new Paragraph({
@@ -205,19 +307,8 @@ function elementChildrenToDocx(root: HTMLElement): (Paragraph | Table)[] {
           }
         })
       )
-    } else if (tag === 'ul') {
-      for (const li of Array.from(el.querySelectorAll(':scope > li'))) {
-        out.push(new Paragraph({ children: inlineRuns(li as HTMLElement), bullet: { level: 0 } }))
-      }
-    } else if (tag === 'ol') {
-      Array.from(el.querySelectorAll(':scope > li')).forEach((li, i) => {
-        out.push(
-          new Paragraph({
-            children: [new TextRun({ text: `${i + 1}. ` }), ...inlineRuns(li as HTMLElement)],
-            indent: { left: 480 }
-          })
-        )
-      })
+    } else if (tag === 'ul' || tag === 'ol') {
+      out.push(...listToDocx(el as HTMLElement, 0))
     } else if (tag === 'pre') {
       out.push(
         new Paragraph({
@@ -226,7 +317,7 @@ function elementChildrenToDocx(root: HTMLElement): (Paragraph | Table)[] {
         })
       )
     } else if (tag === 'table') {
-      out.push(tableToDocx(el as HTMLTableElement))
+      out.push(await tableToDocx(el as HTMLTableElement))
     } else if (tag === 'hr') {
       out.push(
         new Paragraph({
@@ -235,7 +326,7 @@ function elementChildrenToDocx(root: HTMLElement): (Paragraph | Table)[] {
         })
       )
     } else {
-      out.push(...elementChildrenToDocx(el))
+      out.push(...(await elementChildrenToDocx(el)))
     }
   }
   return out
@@ -272,7 +363,7 @@ async function buildDocxBlob(book: Book, items: OrderedChapter[], includeOutline
       )
     }
     const dom = parseHtml(chapter.content)
-    children.push(...elementChildrenToDocx(dom.body))
+    children.push(...(await elementChildrenToDocx(dom.body)))
   }
 
   const doc = new Document({
@@ -311,9 +402,19 @@ function xmlEscape(text: string): string {
   return text.replace(/[&<>"']/g, (c) => XML_ESCAPE[c] ?? c)
 }
 
-function sanitizeXhtml(content: string): string {
+function sanitizeXhtml(content: string, images: EpubImage[], chapterIndex: number): string {
   const doc = parseHtml(content)
-  doc.body.querySelectorAll('img, script, style, iframe, input, button, svg, video, audio, object').forEach((n) => n.remove())
+  doc.body.querySelectorAll('script, style, iframe, input, button, svg, video, audio, object').forEach((n) => n.remove())
+  let idx = 0
+  doc.body.querySelectorAll('img').forEach((n) => {
+    const src = n.getAttribute('src') ?? ''
+    if (!src.startsWith('data:image/')) return
+    const mime = (src.match(/^data:image\/([a-zA-Z0-9]+);base64,/) || [])[1] ?? 'png'
+    const ext = mime === 'jpeg' ? 'jpg' : mime
+    const name = `img-${String(chapterIndex).padStart(3, '0')}-${String(++idx).padStart(3, '0')}.${ext}`
+    images.push({ name, data: src.replace(/^data:image\/[a-zA-Z0-9]+;base64,/, ''), mime: `image/${ext}` })
+    n.setAttribute('src', `images/${name}`)
+  })
   const serializer = new XMLSerializer()
   const parts: string[] = []
   for (const child of Array.from(doc.body.childNodes)) {
@@ -324,13 +425,18 @@ function sanitizeXhtml(content: string): string {
 
 interface EpubChapter extends OrderedChapter {
   file: string
+  images: EpubImage[]
 }
 
-function buildOpf(book: Book, chapters: EpubChapter[]): string {
+function buildOpf(book: Book, chapters: EpubChapter[], images: EpubImage[]): string {
   const manifest =
     chapters
       .map((c, i) => `<item id="ch${i}" href="${c.file}" media-type="application/xhtml+xml"/>`)
-      .join('') + `<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>`
+      .join('') +
+    images
+      .map((img, i) => `<item id="img${i}" href="images/${img.name}" media-type="${img.mime}"/>`)
+      .join('') +
+    `<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>`
   const spine = chapters.map((_c, i) => `<itemref idref="ch${i}"/>`).join('')
   return `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="bookid">
@@ -373,13 +479,14 @@ async function buildEpubBlob(book: Book, items: OrderedChapter[]): Promise<Blob>
   if (!oebps) throw new Error('zip error')
   const chapters: EpubChapter[] = items.map((x, i) => ({
     ...x,
-    file: `chapter-${String(i + 1).padStart(3, '0')}.xhtml`
+    file: `chapter-${String(i + 1).padStart(3, '0')}.xhtml`,
+    images: []
   }))
   oebps.file('style.css', EPUB_CSS)
-  oebps.file('content.opf', buildOpf(book, chapters))
   oebps.file('toc.ncx', buildNcx(book, chapters))
-  for (const c of chapters) {
-    const body = `<h1>${xmlEscape(c.chapter.title)}</h1>\n${sanitizeXhtml(c.chapter.content)}`
+  for (let ci = 0; ci < chapters.length; ci++) {
+    const c = chapters[ci]
+    const body = `<h1>${xmlEscape(c.chapter.title)}</h1>\n${sanitizeXhtml(c.chapter.content, c.images, ci + 1)}`
     const xhtml = `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -387,6 +494,11 @@ async function buildEpubBlob(book: Book, items: OrderedChapter[]): Promise<Blob>
 <body>${body}</body>
 </html>`
     oebps.file(c.file, xhtml)
+  }
+  const allImages = chapters.flatMap((c) => c.images)
+  oebps.file('content.opf', buildOpf(book, chapters, allImages))
+  for (const img of allImages) {
+    oebps.file(`images/${img.name}`, img.data, { base64: true })
   }
   return zip.generateAsync({ type: 'blob', mimeType: 'application/epub+zip', compression: 'DEFLATE' })
 }

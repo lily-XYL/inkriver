@@ -25,7 +25,7 @@ export function SearchView(): JSX.Element {
   const book = useApp((s) => s.book)
   const query = useApp((s) => s.query)
   const setQuery = useApp((s) => s.setQuery)
-  const openEditor = useApp((s) => s.openEditor)
+  const openChapterLocated = useApp((s) => s.openChapterLocated)
   const openNote = useApp((s) => s.openNote)
   const openChar = useApp((s) => s.openChar)
   const openWorld = useApp((s) => s.openWorld)
@@ -41,7 +41,13 @@ export function SearchView(): JSX.Element {
       const hay = `${c.title}\n${outline}\n${text}`
       if (hay.toLowerCase().includes(q.toLowerCase())) {
         const snip = snippetAround(text, q) || snippetAround(outline, q) || c.title
-        out.push({ kind: '章节', icon: 'pen', title: c.title, snippet: snip, action: () => openEditor(c.id) })
+        out.push({
+          kind: '章节',
+          icon: 'book',
+          title: c.title,
+          snippet: snip,
+          action: () => openChapterLocated(c.id, q)
+        })
       }
     }
     for (const n of book.notes) {
@@ -69,7 +75,7 @@ export function SearchView(): JSX.Element {
       }
     }
     return out
-  }, [book, query, openEditor, openNote, openChar, openWorld, openTimeline])
+  }, [book, query, openChapterLocated, openNote, openChar, openWorld, openTimeline])
 
   return (
     <div className="main-scroll">

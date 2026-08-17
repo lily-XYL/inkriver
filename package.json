@@ -1,7 +1,7 @@
 {
   "name": "inkriver",
   "productName": "InkRiver",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "墨河 InkRiver —— 面向长篇小说的 Windows 写作应用",
   "main": "./out/main/index.js",
   "author": "InkRiver",
@@ -12,7 +12,7 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "start": "electron-vite preview",
-    "dist": "electron-vite build && electron-builder --win portable",
+    "dist": "electron-vite build && electron-builder --win dir && node scripts/finalize-dir.cjs",
     "dist:dir": "electron-vite build && electron-builder --win dir",
     "smoke": "electron-vite build && electron . --smoke-test"
   },
@@ -69,22 +69,18 @@
       "package.json"
     ],
     "asar": true,
-    "win": {
-      "icon": "build/icon.ico",
-      "signAndEditExecutable": false,
-      "target": [
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "InkRiver-${version}-portable.${ext}"
-    },
-    "portable": {
-      "artifactName": "InkRiver-${version}-portable.exe",
-      "useZip": true
+      "win": {
+        "icon": "build/icon.ico",
+        "signAndEditExecutable": false,
+        "target": [
+          {
+            "target": "dir",
+            "arch": [
+              "x64"
+            ]
+          }
+        ],
+        "artifactName": "InkRiver-${version}-portable.${ext}"
     }
   }
 }

@@ -1,8 +1,48 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppInfo, Book, RecentItem } from '../shared/types'
+import type { AppInfo, Book, RecentItem, ShortcutId, Shortcuts } from '../shared/types'
 
 const api = {
   info: (): Promise<AppInfo> => ipcRenderer.invoke('app:getInfo'),
+
+  shortcuts: {
+    get: (): Promise<Shortcuts> => ipcRenderer.invoke('shortcuts:get'),
+    set: (patch: Partial<Record<ShortcutId, string>>): Promise<{ ok: boolean; error?: string; shortcuts: Shortcuts }> =>
+      ipcRenderer.invoke('shortcuts:set', patch),
+    reset: (): Promise<{ ok: boolean; shortcuts: Shortcuts }> => ipcRenderer.invoke('shortcuts:reset'),
+    capture: (id: ShortcutId | null): Promise<{ ok: boolean }> => ipcRenderer.invoke('shortcuts:capture', id),
+    onCaptured: (
+      callback: (payload: {
+        id: ShortcutId | null
+        accel: string | null
+        error: string | null
+        shortcuts: Shortcuts
+      }) => void
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        payload: { id: ShortcutId | null; accel: string | null; error: string | null; shortcuts: Shortcuts }
+      ): void => callback(payload)
+      ipcRenderer.on('shortcuts:captured', handler)
+      return () => {
+        ipcRenderer.removeListener('shortcuts:captured', handler)
+      }
+    }
+  },
+
+  win: {
+    minimize: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('window:minimize'),
+    toggleMaximize: (): Promise<{ ok: boolean; maximized: boolean }> =>
+      ipcRenderer.invoke('window:toggleMaximize'),
+    close: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('window:close'),
+    isMaximized: (): Promise<{ maximized: boolean }> => ipcRenderer.invoke('window:isMaximized'),
+    onMaximizedChange: (callback: (maximized: boolean) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, maximized: boolean): void => callback(maximized)
+      ipcRenderer.on('window:maximized-change', handler)
+      return () => {
+        ipcRenderer.removeListener('window:maximized-change', handler)
+      }
+    }
+  },
 
   pickProject: (): Promise<{
     canceled: boolean
@@ -51,12 +91,6 @@ const api = {
   openPath: (p: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('open:path', p),
 
   copyText: (text: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('clipboard:writeText', text),
-
-  find: {
-    start: (text: string, forward = true): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('find:start', { text, forward }),
-    stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('find:stop')
-  },
 
   onMenu: (callback: (action: string) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, action: string): void => callback(action)

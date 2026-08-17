@@ -6,7 +6,7 @@ import { ChapterTree } from './ChapterTree'
 import { formatWords, totalWords, todayKey } from '../lib/words'
 
 const NAV: { view: View; icon: IconName; key: string }[] = [
-  { view: 'editor', icon: 'pen', key: 'editor' },
+  { view: 'editor', icon: 'book', key: 'editor' },
   { view: 'notes', icon: 'note', key: 'notes' },
   { view: 'characters', icon: 'users', key: 'characters' },
   { view: 'world', icon: 'globe', key: 'world' },

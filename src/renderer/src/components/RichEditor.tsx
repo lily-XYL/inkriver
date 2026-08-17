@@ -1,6 +1,6 @@
-import { useEffect, useReducer, useState, type JSX } from 'react'
-import { Extension } from '@tiptap/core'
-import { EditorContent, useEditor, type Editor } from '@tiptap/react'
+import { useEffect, useReducer, useRef, useState, type JSX } from 'react'
+import { Editor, Extension } from '@tiptap/core'
+import { EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Underline from '@tiptap/extension-underline'
@@ -71,10 +71,83 @@ const SearchExtension = Extension.create({
   }
 })
 
+const ResizableImage = Image.extend({
+  addAttributes() {
+    const parent = this.parent?.() ?? {}
+    return {
+      ...parent,
+      width: {
+        default: null,
+        parseHTML: (element) => element.getAttribute('width'),
+        renderHTML: (attributes) => (attributes.width ? { width: attributes.width } : {})
+      }
+    }
+  }
+})
+
+const IMG_SIZES: (string | null)[] = [null, '100%', '75%', '50%', '25%']
+const MAX_IMAGE_DIM = 1600
+
+// 章节编辑器实例缓存：切换章节时保留撤销历史与光标位置
+const editorCache = new Map<string, Editor>()
+const EDITOR_CACHE_LIMIT = 20
+
+function cachedEditor(key: string): Editor | undefined {
+  const ed = editorCache.get(key)
+  if (ed) {
+    editorCache.delete(key)
+    editorCache.set(key, ed)
+  }
+  return ed
+}
+
+function storeEditor(key: string, ed: Editor): void {
+  editorCache.set(key, ed)
+  while (editorCache.size > EDITOR_CACHE_LIMIT) {
+    const oldestKey = editorCache.keys().next().value as string | undefined
+    if (oldestKey === undefined) break
+    const oldest = editorCache.get(oldestKey)
+    editorCache.delete(oldestKey)
+    try {
+      oldest?.destroy()
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function downscaleDataUrl(dataUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new window.Image()
+    img.onload = () => {
+      const maxDim = Math.max(img.naturalWidth, img.naturalHeight)
+      if (maxDim <= MAX_IMAGE_DIM) {
+        resolve(dataUrl)
+        return
+      }
+      const scale = MAX_IMAGE_DIM / maxDim
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(img.naturalWidth * scale))
+      canvas.height = Math.max(1, Math.round(img.naturalHeight * scale))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        resolve(dataUrl)
+        return
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      const isPng = dataUrl.startsWith('data:image/png')
+      resolve(canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', 0.85))
+    }
+    img.onerror = () => resolve(dataUrl)
+    img.src = dataUrl
+  })
+}
+
 async function insertImage(editor: Editor): Promise<void> {
   const result = await window.inkriver.pickImage()
   if (result.canceled || !result.dataUrl) return
-  editor.chain().focus().setImage({ src: result.dataUrl }).run()
+  const dataUrl = await downscaleDataUrl(result.dataUrl)
+  editor.chain().focus().setImage({ src: dataUrl }).run()
 }
 
 export function RichEditor({
@@ -83,7 +156,8 @@ export function RichEditor({
   placeholder,
   typewriter,
   onReady,
-  minHeight
+  minHeight,
+  cacheKey
 }: {
   value: string
   onChange: (html: string) => void
@@ -91,64 +165,79 @@ export function RichEditor({
   typewriter?: boolean
   onReady?: (editor: Editor) => void
   minHeight?: number
+  cacheKey?: string
 }): JSX.Element {
   const [, rerender] = useReducer((x: number) => x + 1, 0)
   const [linkOpen, setLinkOpen] = useState(false)
   const [linkUrl, setLinkUrl] = useState('')
-
-  const editor = useEditor({
-    immediatelyRender: false,
-    content: value,
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3, 4, 5, 6] }
-      }),
-      Underline,
-      Highlight,
-      Link.configure({
-        openOnClick: false,
-        autolink: true,
-        HTMLAttributes: { rel: 'noopener' }
-      }),
-      Image.configure({ allowBase64: true, inline: false }),
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Table.configure({ resizable: true }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      Placeholder.configure({ placeholder: placeholder ?? '从这里开始落笔…' }),
-      SearchExtension
-    ],
-    editorProps: {
-      attributes: {
-        class: 'ProseMirror'
-      }
-    },
-    onUpdate: ({ editor: ed }) => {
-      onChange(ed.getHTML())
-      if (typewriter) {
-        requestAnimationFrame(() => {
-          const dom = ed.view.domAtPos(ed.state.selection.from).node as HTMLElement | undefined
-          dom?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-        })
-      }
-    },
-    onSelectionUpdate: () => rerender()
-  })
+  const [editor, setEditor] = useState<Editor | null>(null)
+  const onChangeRef = useRef(onChange)
+  const typewriterRef = useRef(typewriter)
+  onChangeRef.current = onChange
+  typewriterRef.current = typewriter
 
   useEffect(() => {
-    if (editor) {
-      editor.on('transaction', rerender)
-      onReady?.(editor)
-      return () => {
-        editor.off('transaction', rerender)
-      }
+    let ed: Editor | null | undefined = null
+    if (cacheKey) ed = cachedEditor(cacheKey)
+    if (!ed) {
+      ed = new Editor({
+        content: value,
+        extensions: [
+          StarterKit.configure({
+            heading: { levels: [1, 2, 3, 4, 5, 6] }
+          }),
+          Underline,
+          Highlight,
+          Link.configure({
+            openOnClick: false,
+            autolink: true,
+            HTMLAttributes: { rel: 'noopener' }
+          }),
+          ResizableImage.configure({ allowBase64: true, inline: false }),
+          TextAlign.configure({ types: ['heading', 'paragraph'] }),
+          TaskList,
+          TaskItem.configure({ nested: true }),
+          Table.configure({ resizable: true }),
+          TableRow,
+          TableHeader,
+          TableCell,
+          Placeholder.configure({ placeholder: placeholder ?? '从这里开始落笔…' }),
+          SearchExtension
+        ],
+        editorProps: {
+          attributes: {
+            class: 'ProseMirror'
+          }
+        },
+        onUpdate: ({ editor: e }) => {
+          onChangeRef.current(e.getHTML())
+          if (typewriterRef.current) {
+            requestAnimationFrame(() => {
+              const dom = e.view.domAtPos(e.state.selection.from).node as HTMLElement | undefined
+              dom?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+            })
+          }
+        },
+        onSelectionUpdate: () => rerender()
+      })
+      if (cacheKey) storeEditor(cacheKey, ed)
+    } else if (ed.getHTML() !== value) {
+      ed.commands.setContent(value, false)
     }
-  }, [editor, onReady])
+    const onTransaction = (): void => rerender()
+    ed.on('transaction', onTransaction)
+    setEditor(ed)
+    onReady?.(ed)
+    return () => {
+      ed.off('transaction', onTransaction)
+    }
+    // 编辑器实例由 cacheKey 决定，value/onChange 通过 ref 保持最新
+  }, [cacheKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!editor) return <div style={{ minHeight: minHeight ?? 300 }} />
+
+  const imageSelected = editor.isActive('image')
+  const imageWidth = imageSelected ? editor.getAttributes('image').width : null
 
   return (
     <div>
@@ -193,6 +282,31 @@ export function RichEditor({
             <Icon name="table" size={15} />
           </button>
         </span>
+        {imageSelected && (
+          <span className="inline-flex img-size-controls">
+            <span className="tb-sep" />
+            {IMG_SIZES.map((w) => {
+              const active = imageWidth === w
+              return (
+                <button
+                  key={String(w)}
+                  className={`tb-btn ${active ? 'active' : ''}`}
+                  title={w === null ? '原始宽度' : `宽度 ${w}`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    editor
+                      .chain()
+                      .focus()
+                      .updateAttributes('image', w === null ? { width: null } : { width: w })
+                      .run()
+                  }}
+                >
+                  {w === null ? '原宽' : w}
+                </button>
+              )
+            })}
+          </span>
+        )}
       </div>
 
       {linkOpen && (

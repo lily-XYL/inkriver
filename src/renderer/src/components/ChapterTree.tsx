@@ -446,7 +446,6 @@ function ChapterRow({
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
       <div className={`tree-row ${active ? 'active' : ''}`} onClick={onOpen}>
-        <Icon name="pen" size={13} />
         {renameId === chapter.id ? (
           <input
             style={{ flex: 1, minWidth: 0 }}

@@ -161,6 +161,18 @@ export interface AppInfo {
   projectDir: string | null
 }
 
+export type ShortcutId =
+  | 'new-project'
+  | 'new-chapter'
+  | 'open-project'
+  | 'save'
+  | 'export'
+  | 'find'
+  | 'focus-mode'
+  | 'toggle-theme'
+
+export type Shortcuts = Record<ShortcutId, string>
+
 export const DEFAULT_ACCENT = '#3b5b92'
 
 export const WORLD_TYPES: { id: WorldType; labelZh: string; labelEn: string }[] = [
@@ -247,7 +259,7 @@ export function createEmptyBook(meta?: Partial<BookMeta>): Book {
       updatedAt: now
     },
     settings: createDefaultSettings(),
-    volumes: [],
+    volumes: [{ id: newId(), title: '第一卷', order: 0 }],
     chapters: [],
     notes: [],
     characters: [],

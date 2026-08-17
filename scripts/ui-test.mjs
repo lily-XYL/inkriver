@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const PORT = 9333
-const EXE = path.resolve('release/win-unpacked/InkRiver.exe')
+const EXE = path.resolve('release/InkRiverData/InkRiver.exe')
 const projectDir = path.resolve('.ui-test/测试.inkriver')
 
 const now = new Date().toISOString()
@@ -187,7 +187,7 @@ try {
   console.log('STICKY', sticky)
 
   // 复制全文
-  await evalJs(cdp, `document.querySelector('[title="复制全文"]')?.click(); 'ok'`)
+  await evalJs(cdp, `document.querySelector('[title="复制全书"]')?.click(); 'ok'`)
   await new Promise((r) => setTimeout(r, 600))
   const copyToast = await evalJs(
     cdp,

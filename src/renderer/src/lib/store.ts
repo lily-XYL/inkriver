@@ -47,6 +47,7 @@ interface AppState {
   worldId: string | null
   timelineFocusId: string | null
   query: string
+  locate: string | null
   findOpen: boolean
   exportOpen: boolean
   newOpen: boolean
@@ -69,6 +70,8 @@ interface AppState {
   openChar: (charId: string) => void
   openWorld: (worldId: string) => void
   openTimeline: (timelineId: string) => void
+  openChapterLocated: (chapterId: string, query: string) => void
+  clearLocate: () => void
   setQuery: (q: string) => void
   toggleFind: () => void
   toggleExport: () => void
@@ -83,6 +86,7 @@ interface AppState {
   recentRemove: (dir: string) => Promise<void>
   saveNow: () => Promise<void>
   copyBookText: () => Promise<void>
+  copyChapterText: (id: string) => Promise<void>
   restoreBackup: (name: string) => Promise<void>
 
   updateBook: (fn: (draft: Book) => void) => void
@@ -124,6 +128,63 @@ interface AppState {
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
+function nextChapterNumber(chapters: Chapter[]): number {
+  let max = 0
+  for (const c of chapters) {
+    const m = c.title.match(/^第\s*(\d+)\s*章/)
+    if (m) max = Math.max(max, Number(m[1]))
+  }
+  return Math.max(chapters.length + 1, max + 1)
+}
+
+const CN_DIGITS: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
+
+function cnNumberToInt(text: string): number {
+  let total = 0
+  let section = 0
+  let num = 0
+  for (const ch of text) {
+    if (CN_DIGITS[ch] !== undefined) {
+      num = CN_DIGITS[ch]
+    } else if (ch === '十') {
+      section += (num || 1) * 10
+      num = 0
+    } else if (ch === '百') {
+      section += (num || 1) * 100
+      num = 0
+    }
+  }
+  return section + num
+}
+
+function intToCnNumber(n: number): string {
+  if (n <= 0) return String(n)
+  if (n < 10) return Object.keys(CN_DIGITS)[n - 1]
+  if (n < 100) {
+    const tens = Math.floor(n / 10)
+    const ones = n % 10
+    return (tens === 1 ? '' : Object.keys(CN_DIGITS)[tens - 1]) + '十' + (ones ? Object.keys(CN_DIGITS)[ones - 1] : '')
+  }
+  if (n < 1000) {
+    const hundreds = Math.floor(n / 100)
+    const rest = n % 100
+    return Object.keys(CN_DIGITS)[hundreds - 1] + '百' + (rest ? intToCnNumber(rest) : '')
+  }
+  return String(n)
+}
+
+function nextVolumeNumber(volumes: Volume[]): number {
+  let max = 0
+  for (const v of volumes) {
+    const m = v.title.match(/^第\s*([\d一二三四五六七八九十百]+)\s*卷/)
+    if (m) {
+      const n = /^\d+$/.test(m[1]) ? Number(m[1]) : cnNumberToInt(m[1])
+      max = Math.max(max, n)
+    }
+  }
+  return Math.max(volumes.length + 1, max + 1)
+}
+
 export const useApp: UseBoundStore<StoreApi<AppState>> = create<AppState>()(
   immer((set, get) => {
     function scheduleSave(): void {
@@ -142,11 +203,11 @@ export const useApp: UseBoundStore<StoreApi<AppState>> = create<AppState>()(
       scheduleSave()
     }
 
-    function applyBook(fn: (draft: Book) => void): void {
+    function applyBook(fn: (draft: Book) => void, resort = true): void {
       set((s) => {
         if (s.book) {
           fn(s.book)
-          sortBook(s.book)
+          if (resort) sortBook(s.book)
         }
       })
       touch()
@@ -192,6 +253,7 @@ export const useApp: UseBoundStore<StoreApi<AppState>> = create<AppState>()(
       worldId: null,
       timelineFocusId: null,
       query: '',
+      locate: null,
       findOpen: false,
       exportOpen: false,
       newOpen: false,
@@ -223,6 +285,15 @@ export const useApp: UseBoundStore<StoreApi<AppState>> = create<AppState>()(
               s.setView('home')
               s.toggleNew()
               break
+            case 'new-chapter': {
+              if (!s.book) {
+                get().toast('请先新建或打开一个项目', 'info')
+                break
+              }
+              const current = s.book.chapters.find((c) => c.id === s.chapterId)
+              s.addChapter(current ? current.parentId : '')
+              break
+            }
             case 'open-project':
               void s.openProjectFlow()
               break
@@ -282,6 +353,14 @@ export const useApp: UseBoundStore<StoreApi<AppState>> = create<AppState>()(
 
       openEditor(chapterId) {
         set({ view: 'editor', chapterId, findOpen: false })
+      },
+
+      openChapterLocated(chapterId, query) {
+        set({ view: 'editor', chapterId, findOpen: true, locate: query })
+      },
+
+      clearLocate() {
+        set({ locate: null })
       },
 
       openNote(noteId) {
@@ -396,6 +475,14 @@ export const useApp: UseBoundStore<StoreApi<AppState>> = create<AppState>()(
 
       async closeProject() {
         await get().saveNow()
+        const dir = get().projectDir
+        if (dir) {
+          try {
+            await window.inkriver.backups.now(dir)
+          } catch {
+            // 备份失败不阻塞关闭
+          }
+        }
         set((s) => {
           s.projectDir = null
           s.book = null
@@ -444,6 +531,19 @@ export const useApp: UseBoundStore<StoreApi<AppState>> = create<AppState>()(
         }
       },
 
+      async copyChapterText(id) {
+        const book = get().book
+        const chapter = book?.chapters.find((c) => c.id === id)
+        if (!book || !chapter) return
+        const text = htmlToText(chapter.content)
+        try {
+          await window.inkriver.copyText(text)
+          get().toast(`已复制本章文字（${countWords(text).toLocaleString('zh-CN')} 字）`, 'success')
+        } catch {
+          get().toast('复制失败', 'error')
+        }
+      },
+
       async restoreBackup(name) {
         const dir = get().projectDir
         if (!dir) return
@@ -474,8 +574,11 @@ export const useApp: UseBoundStore<StoreApi<AppState>> = create<AppState>()(
 
       addVolume() {
         const id = newId()
-        applyBook((book) => {
-          book.volumes.push({ id, title: '新卷', order: book.volumes.length })
+        const book = get().book
+        if (!book) return
+        const number = nextVolumeNumber(book.volumes)
+        applyBook((draft) => {
+          draft.volumes.push({ id, title: `第${intToCnNumber(number)}卷`, order: draft.volumes.length })
         })
         get().toast('已新建卷，可点击右侧铅笔重命名', 'success')
       },
@@ -514,12 +617,15 @@ export const useApp: UseBoundStore<StoreApi<AppState>> = create<AppState>()(
 
       addChapter(parentId) {
         const id = newId()
+        const book = get().book
+        if (!book) return
+        const number = nextChapterNumber(book.chapters)
         applyBook((book) => {
           const siblings = book.chapters.filter((c) => c.parentId === parentId)
           const order = siblings.length
           book.chapters.push({
             id,
-            title: '新章节',
+            title: `第${number}章`,
             content: '',
             outline: '',
             status: 'draft',
@@ -541,7 +647,7 @@ export const useApp: UseBoundStore<StoreApi<AppState>> = create<AppState>()(
             Object.assign(ch, patch)
             ch.updatedAt = nowIso()
           }
-        })
+        }, false)
       },
 
       deleteChapter(id) {

@@ -16,7 +16,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11
 
       - uses: actions/setup-node@v4
         with:
@@ -29,17 +29,21 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
-      - name: Build & package portable exe
+      - name: Build & package
         run: pnpm dist
 
-      - name: Upload portable exe
+      - name: Zip app folder
+        shell: pwsh
+        run: Compress-Archive -Path release/InkRiverData -DestinationPath release/InkRiver-windows.zip -Force
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InkRiver-portable-windows
-          path: release/InkRiver-*-portable.exe
+          name: InkRiver-windows
+          path: release/InkRiver-windows.zip
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/InkRiver-*-portable.exe
+          files: release/InkRiver-windows.zip

@@ -29,7 +29,7 @@ build/           图标源文件与产物
 - **项目库**：新建 / 打开 / 最近项目，项目以 `.inkriver` 文件夹保存，含 `book.json` 与 `backups/` 自动备份目录
 - **分卷与章节树**：卷、章节两级结构，拖拽排序、移动到卷、复制、重命名、回收站恢复
 - **富文本编辑器**：标题、加粗、斜体、下划线、高亮、引用、代码块、列表、任务清单、表格、图片（自动转内嵌）、链接、对齐；工具栏固定不随正文滚动
-- **复制全文**：一键把整本书（书名、作者、卷、章节与正文）以纯文本复制到剪贴板
+- **复制**：一键“复制全书”（书名、作者、卷、章节与正文）或“复制本章文字”（当前章节正文）到剪贴板
 - **章节大纲**：每章正文与大纲双编辑区，正文 / 大纲一键切换
 - **笔记**：灵感 / 大纲 / 设定 / 杂项四类，标签、置顶
 - **人物卡**：外貌、性格、背景、目标、冲突、标签、首次出场章节、关系编辑器
@@ -37,10 +37,12 @@ build/           图标源文件与产物
 - **世界观**：地点 / 组织 / 物品 / 概念 / 种族 / 事件等条目，可与人物和条目互相关联
 - **时间线**：纪年事件流，关联章节与人物，可排序
 - **统计**：总字数、今日字数、日均、连续写作天数、近 90 天热力图、章节字数排行、目标进度
-- **全局搜索**：跨正文、笔记、人物、世界观、时间线检索并跳转
-- **导出**：TXT / Markdown / DOCX / EPUB，支持单章或全本、附带大纲
-- **自动保存与备份**：防抖自动保存、退出前同步落盘、定时备份、一键恢复
+- **全局搜索**：跨正文、笔记、人物、世界观、时间线检索，点击结果自动定位并高亮到第一个匹配处
+- **导出**：TXT / Markdown / DOCX / EPUB，支持单章或全本、附带大纲；DOCX / EPUB 自动嵌入正文图片
+- **自动保存与备份**：防抖自动保存、退出前同步落盘、定时备份（默认开启）、打开 / 关闭项目强制快照、一键恢复
 - **外观与写作设置**：浅色 / 深色 / 护眼主题、强调色、编辑器字体 / 字号 / 行距 / 宽度、每日与全书目标、打字机模式、专注模式、中英文界面
+- **快捷键**：全部全局快捷键可在设置中自定义，内置“使用文档 / 快捷键速查”
+- **分卷自动编号**：新书默认第一卷，新建卷 / 新建章节自动编号（第一卷、第二卷… / 第N章）
 
 ## 技术栈
 
@@ -48,7 +50,7 @@ build/           图标源文件与产物
 - TipTap（ProseMirror）富文本编辑
 - Zustand + Immer 状态管理，dnd-kit 拖拽
 - docx / jszip / turndown 导出
-- electron-builder 打包免安装便携版
+- electron-builder 打包免安装目录版（exe 与数据同在一个 `InkRiverData` 文件夹）
 
 ## 开发
 
@@ -70,22 +72,24 @@ electron_mirror=https://npmmirror.com/mirrors/electron/
 electron_builder_binaries_mirror=https://npmmirror.com/mirrors/electron-builder-binaries/
 ```
 
-## 打包免安装 exe
+## 打包免安装目录版
 
 ```bash
 pnpm dist
 ```
 
-产物位于 `release/InkRiver-1.0.0-portable.exe`，单文件免安装，双击即用。
+产物位于 `release/InkRiverData/InkRiver.exe`（版本 1.1.0），整个 `InkRiverData` 文件夹即完整应用：
 
-图标为艺术性毛笔造型（宣纸底、竹笔杆、墨迹与朱红印章），源文件在 `build/icon.svg`。`scripts/make-icon.js` 用 Electron 离屏渲染出 `build/icon.png`（1024×1024）与多尺寸 `build/icon.ico`（256/128/64/48/32，PNG-in-ICO 无损格式），打包时嵌入应用与便携版外壳。
+- 双击 `InkRiver.exe` 即可运行，无需安装；
+- 最近打开、快捷键设置等用户数据直接写入该文件夹，不额外生成数据目录，整体拷贝 / 备份即迁移；
+- 小说正文保存在你选择的 `.inkriver` 项目文件夹中（含 `backups/` 自动备份）。
+
+图标为艺术性毛笔造型（宣纸底、竹笔杆、墨迹与朱红印章），源文件在 `build/icon.svg`。`scripts/make-icon.js` 用 Electron 离屏渲染出 `build/icon.png`（1024×1024）与多尺寸 `build/icon.ico`（256/128/64/48/32，PNG-in-ICO 无损格式），打包时嵌入应用。
 
 ## Windows 打包的两处已知问题（本项目已内置规避方案）
 
 1. **winCodeSign 解压符号链接失败**：electron-builder 的 winCodeSign 压缩包内含 macOS 符号链接，在无管理员权限的 Windows 上 7-Zip 无法解压。
    - 方案：`pnpm install` 的 `postinstall` 会自动运行 `scripts/setup-wincodesign.mjs`，把 winCodeSign 解压到 `.vendor/winCodeSign`（跳过 `darwin/`），并让 electron-builder 直接使用本地副本。
-2. **便携版 NSIS 的 CopyFiles 拷贝不完整**：默认 7z 解压后经 `CopyFiles` 拷贝到临时目录时，部分语言包会拷贝失败并无限重试，导致应用静默退出。
-   - 方案：`portable.useZip: true`，让便携版走 `nsisunz` 直接解压，完全绕开 `CopyFiles`。
 
 另外 `signAndEditExecutable: false` + `scripts/after-pack.cjs` 钩子用本地 rcedit 写入应用图标与版本信息，避免打包阶段下载 winCodeSign。
 
@@ -101,11 +105,14 @@ pnpm dist
 | --- | --- |
 | Ctrl+S | 保存 |
 | Ctrl+N / Ctrl+O | 新建 / 打开项目 |
+| Ctrl+Shift+N | 新建章节 |
 | Ctrl+F | 查找 / 替换 |
 | Ctrl+E | 导出 |
 | Ctrl+Shift+F | 专注模式 |
 | Ctrl+Shift+T | 循环切换主题 |
 | F11 | 全屏 |
+
+所有全局快捷键均可在“设置 → 快捷键”中自定义；编辑器内还有加粗（Ctrl+B）、斜体（Ctrl+I）、下划线（Ctrl+U）等格式快捷键，详见设置中的“使用文档”。
 
 ## 贡献
 
