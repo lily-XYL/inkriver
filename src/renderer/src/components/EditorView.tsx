@@ -231,6 +231,7 @@ export function EditorView(): JSX.Element {
           <div className="editor-paper" style={paperStyle}>
             {tab === 'content' ? (
               <RichEditor
+                key={`content:${chapter.id}`}
                 cacheKey={`content:${chapter.id}`}
                 value={chapter.content}
                 typewriter={settings.typewriter}
@@ -244,6 +245,7 @@ export function EditorView(): JSX.Element {
               />
             ) : (
               <RichEditor
+                key={`outline:${chapter.id}`}
                 cacheKey={`outline:${chapter.id}`}
                 value={chapter.outline}
                 placeholder="本章大纲：这一章要发生什么？"

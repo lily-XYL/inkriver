@@ -9,6 +9,13 @@ const fs = require('node:fs')
 exports.default = async function afterPack(context) {
   const { appOutDir, packager, electronPlatformName } = context
   if (electronPlatformName !== 'win32') return
+  // rcedit is a Windows executable. Skip resource editing only when the
+  // Windows package is cross-built from another host; native Windows builds
+  // retain the icon and version-metadata update below.
+  if (process.platform !== 'win32') {
+    console.warn('[after-pack] skipped Windows resource editing on non-Windows build host')
+    return
+  }
   const exe = path.join(appOutDir, `${packager.appInfo.productFilename}.exe`)
   if (!fs.existsSync(exe)) return
   const vendor = path.join(__dirname, '..', '.vendor', 'winCodeSign')

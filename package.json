@@ -1,7 +1,7 @@
 {
   "name": "inkriver",
   "productName": "InkRiver",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "墨河 InkRiver —— 面向长篇小说的 Windows 写作应用",
   "main": "./out/main/index.js",
   "author": "InkRiver",
